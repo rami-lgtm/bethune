@@ -1,0 +1,12 @@
+node_modules
+.output
+.vinxi
+dist
+convex/_generated
+.env
+.env.local
+.env.*.local
+*.tsbuildinfo
+.DS_Store
+.context
+.vercel
