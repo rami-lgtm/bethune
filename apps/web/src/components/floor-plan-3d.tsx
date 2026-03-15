@@ -6,7 +6,6 @@ import {
   OrbitControls,
   Text,
   RoundedBox,
-  Environment,
   ContactShadows,
   Float,
 } from "@react-three/drei";
@@ -76,13 +75,13 @@ function Scene({ floor }: { floor: FloorData }) {
 
   return (
     <>
-      <Environment preset="city" />
       <fog attach="fog" args={["#f1f2f4", 25, 55]} />
 
-      <ambientLight intensity={0.4} />
+      <ambientLight intensity={0.6} />
+      <hemisphereLight args={["#e8ecf0", "#d4cfc8", 0.5]} />
       <directionalLight
         position={[8, 20, 12]}
-        intensity={1.2}
+        intensity={1.4}
         castShadow
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
