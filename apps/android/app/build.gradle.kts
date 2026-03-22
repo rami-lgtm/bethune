@@ -14,8 +14,7 @@ android {
         versionCode = 1
         versionName = "1.0.0"
 
-        // TODO: Replace with your Bethune Vercel URL
-        buildConfigField("String", "BETHUNE_URL", "\"https://bethune.vercel.app/dashboard\"")
+        buildConfigField("String", "BETHUNE_URL", "\"https://bethune-coral.vercel.app/dashboard\"")
     }
 
     buildFeatures {
