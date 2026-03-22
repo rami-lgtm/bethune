@@ -46,7 +46,8 @@ class WakeWordService : Service() {
         // Cooldown after detection to prevent repeated triggers (ms)
         private const val DETECTION_COOLDOWN_MS = 3000L
 
-        // Model file in assets/ — replace with your trained "Hey Bethune" model
+        // Model file in assets/ — currently using "okay computer" as placeholder
+        // Replace with a trained "Hey Bethune" model when available
         private const val MODEL_FILENAME = "hey_bethune.tflite"
 
         @Volatile
