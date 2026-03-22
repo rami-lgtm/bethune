@@ -27,8 +27,13 @@ export function OfflineGate({ children }: { children: React.ReactNode }) {
 
 function OfflineScreen({ onRetry }: { onRetry: () => void }) {
   const openWifiSettings = () => {
-    // Android deep-link to WiFi settings
-    window.location.href = "intent:#Intent;action=android.settings.WIFI_SETTINGS;end";
+    // Use native bridge if running inside Bethune Android app
+    if ((window as any).BethuneNative?.openWifiSettings) {
+      (window as any).BethuneNative.openWifiSettings();
+    } else {
+      // Fallback: Android deep-link to WiFi settings from browser/PWA
+      window.location.href = "intent:#Intent;action=android.settings.WIFI_SETTINGS;end";
+    }
   };
 
   return (

@@ -63,6 +63,16 @@ function DashboardPage() {
     }
   }, [voice.transcript]);
 
+  // Listen for wake word from native Android app (window.onBethuneWakeWord)
+  useEffect(() => {
+    (window as any).onBethuneWakeWord = () => {
+      voice.start();
+    };
+    return () => {
+      delete (window as any).onBethuneWakeWord;
+    };
+  }, [voice.start]);
+
   const handleSubmit = () => {
     const text = input.trim();
     if (!text) return;
