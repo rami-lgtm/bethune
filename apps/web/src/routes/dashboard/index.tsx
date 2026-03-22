@@ -6,10 +6,15 @@ import {
   CheckCircle2,
   Circle,
   Clock,
+  Mic,
+  MicOff,
   Sparkles,
+  Volume2,
+  VolumeX,
   Zap,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useVoiceInput, speak } from "@/hooks/use-voice";
 
 export const Route = createFileRoute("/dashboard/")({
   component: DashboardPage,
@@ -46,8 +51,17 @@ const todayActivity = [
 function DashboardPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  const [voiceOutputEnabled, setVoiceOutputEnabled] = useState(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const voice = useVoiceInput();
+
+  // Sync voice transcript into input field
+  useEffect(() => {
+    if (voice.transcript) {
+      setInput(voice.transcript);
+    }
+  }, [voice.transcript]);
 
   const handleSubmit = () => {
     const text = input.trim();
@@ -67,6 +81,10 @@ function DashboardPage() {
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInput("");
+
+    if (voiceOutputEnabled) {
+      speak(assistantMsg.content);
+    }
 
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -118,15 +136,35 @@ function DashboardPage() {
       <div className="shrink-0 border-t border-bethune-black/5 bg-white px-6 py-4">
         <div className="mx-auto max-w-3xl">
           <div className="flex items-end gap-3 rounded-2xl border border-bethune-black/10 bg-bethune-cream/50 px-4 py-3 transition-colors focus-within:border-bethune-warm/30 focus-within:bg-white">
+            {voice.isSupported && (
+              <button
+                onClick={voice.isListening ? voice.stop : voice.start}
+                className={`flex size-8 shrink-0 items-center justify-center rounded-lg transition-all active:scale-95 ${
+                  voice.isListening
+                    ? "animate-pulse bg-red-500 text-white"
+                    : "bg-bethune-cream text-bethune-gray hover:text-bethune-black"
+                }`}
+                title={voice.isListening ? "Stop listening" : "Voice input"}
+              >
+                {voice.isListening ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+              </button>
+            )}
             <textarea
               ref={textareaRef}
               value={input}
               onChange={handleInput}
               onKeyDown={handleKeyDown}
-              placeholder="Ask Bethune anything..."
+              placeholder={voice.isListening ? "Listening..." : "Ask Bethune anything..."}
               rows={1}
               className="max-h-[200px] flex-1 resize-none bg-transparent text-sm text-bethune-black outline-none placeholder:text-bethune-muted"
             />
+            <button
+              onClick={() => setVoiceOutputEnabled(!voiceOutputEnabled)}
+              className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-bethune-cream text-bethune-gray transition-all hover:text-bethune-black active:scale-95"
+              title={voiceOutputEnabled ? "Mute voice output" : "Enable voice output"}
+            >
+              {voiceOutputEnabled ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
+            </button>
             <button
               onClick={handleSubmit}
               disabled={!input.trim()}
