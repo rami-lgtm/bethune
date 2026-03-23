@@ -119,25 +119,29 @@ class WakeWordService : Service() {
     private fun startListening() {
         if (isListening) return
 
+        NativeDebugLog.log("Starting wake word listener...")
+
         // Load TFLite model
         try {
+            NativeDebugLog.log("Loading model: $MODEL_FILENAME")
             val options = Interpreter.Options().apply {
                 setNumThreads(2)
                 setUseXNNPACK(true)
             }
             interpreter = Interpreter(loadModelFile(MODEL_FILENAME), options)
 
-            // Log tensor info for debugging
             val model = interpreter!!
+            NativeDebugLog.log("Model loaded OK. Inputs=${model.inputTensorCount} Outputs=${model.outputTensorCount}")
             for (i in 0 until model.inputTensorCount) {
                 val t = model.getInputTensor(i)
-                Log.i(TAG, "Input[$i] '${t.name()}': shape=${t.shape().contentToString()} dtype=${t.dataType()}")
+                NativeDebugLog.log("  Input[$i] '${t.name()}': shape=${t.shape().contentToString()} dtype=${t.dataType()}")
             }
             for (i in 0 until model.outputTensorCount) {
                 val t = model.getOutputTensor(i)
-                Log.i(TAG, "Output[$i] '${t.name()}': shape=${t.shape().contentToString()} dtype=${t.dataType()}")
+                NativeDebugLog.log("  Output[$i] '${t.name()}': shape=${t.shape().contentToString()} dtype=${t.dataType()}")
             }
         } catch (e: Exception) {
+            NativeDebugLog.log("ERROR loading model: ${e.message}")
             Log.e(TAG, "Failed to load model: ${e.message}", e)
             stopSelf()
             return
@@ -147,6 +151,7 @@ class WakeWordService : Service() {
         val bufferSize = AudioRecord.getMinBufferSize(
             SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
         )
+        NativeDebugLog.log("AudioRecord bufferSize=$bufferSize")
         audioRecord = AudioRecord(
             MediaRecorder.AudioSource.MIC,
             SAMPLE_RATE,
@@ -156,6 +161,7 @@ class WakeWordService : Service() {
         )
 
         if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+            NativeDebugLog.log("ERROR: AudioRecord failed to initialize")
             Log.e(TAG, "AudioRecord failed to initialize")
             stopSelf()
             return
@@ -177,17 +183,20 @@ class WakeWordService : Service() {
     }
 
     private fun audioLoop() {
-        val model = interpreter ?: return
+        val model = interpreter ?: run {
+            NativeDebugLog.log("ERROR: interpreter is null in audioLoop")
+            return
+        }
 
         // Read model input shape to determine stride
         val inputShape = model.getInputTensor(0).shape()
         // Expected shape: [1, stride, 40] or [1, 40]
         val stride = if (inputShape.size == 3) inputShape[1] else 1
         val featureDim = if (inputShape.size == 3) inputShape[2] else inputShape[1]
-        Log.i(TAG, "Model expects stride=$stride featureDim=$featureDim")
+        NativeDebugLog.log("Model stride=$stride featureDim=$featureDim inputShape=${inputShape.contentToString()}")
 
         if (featureDim != NUM_FEATURES) {
-            Log.e(TAG, "Model feature dim ($featureDim) != expected ($NUM_FEATURES)")
+            NativeDebugLog.log("ERROR: feature dim mismatch ($featureDim != $NUM_FEATURES)")
             return
         }
 
@@ -203,9 +212,10 @@ class WakeWordService : Service() {
         var probIndex = 0
         var totalSlices = 0
         var lastDetectionTime = 0L
+        var maxProbSeen = 0
 
         audioRecord?.startRecording()
-        Log.i(TAG, "Listening started (stride=$stride, step=$FEATURE_STEP_SIZE)")
+        NativeDebugLog.log("Audio recording started. Listening...")
 
         while (isListening) {
             // Read one 30ms frame
@@ -228,9 +238,16 @@ class WakeWordService : Service() {
 
             // Run inference
             val prob = runInference(model, strideBuffer, stride)
-            if (prob < 0) continue // inference error
+            if (prob < 0) {
+                if (totalSlices == 0) NativeDebugLog.log("ERROR: First inference failed")
+                continue
+            }
 
             totalSlices++
+            if (prob > maxProbSeen) {
+                maxProbSeen = prob
+                NativeDebugLog.log("New max prob: $maxProbSeen/255 (slice $totalSlices)")
+            }
 
             // Store in sliding window
             probWindow[probIndex] = prob
@@ -239,7 +256,7 @@ class WakeWordService : Service() {
             // Log periodically
             if (totalSlices % 50 == 0) {
                 val avg = probWindow.sum() / SLIDING_WINDOW_SIZE
-                Log.d(TAG, "Slice $totalSlices: prob=$prob avg=$avg threshold=$PROBABILITY_CUTOFF_UINT8")
+                NativeDebugLog.log("Slice $totalSlices: prob=$prob avg=$avg max=$maxProbSeen threshold=$PROBABILITY_CUTOFF_UINT8")
             }
 
             // Wait for minimum warmup slices
@@ -252,7 +269,7 @@ class WakeWordService : Service() {
             // Check sliding window average against threshold
             val avgProb = probWindow.sum() / SLIDING_WINDOW_SIZE
             if (avgProb >= PROBABILITY_CUTOFF_UINT8) {
-                Log.i(TAG, "*** WAKE WORD DETECTED *** avg=$avgProb threshold=$PROBABILITY_CUTOFF_UINT8")
+                NativeDebugLog.log("*** WAKE WORD DETECTED *** avg=$avgProb threshold=$PROBABILITY_CUTOFF_UINT8")
                 lastDetectionTime = now
                 // Reset window
                 probWindow.fill(0)

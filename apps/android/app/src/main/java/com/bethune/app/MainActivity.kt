@@ -165,6 +165,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun getDebugLog(): String {
+            return NativeDebugLog.getAll()
+        }
+
+        @JavascriptInterface
         fun openWifiSettings() {
             val intent = Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)
             startActivity(intent)

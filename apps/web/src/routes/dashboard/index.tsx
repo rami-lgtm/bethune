@@ -99,11 +99,34 @@ function DashboardPage() {
     };
   }, [voice.start]);
 
-  // Check if running inside native Android app
+  // Check if running inside native Android app and poll native debug log
   useEffect(() => {
-    const isNative = !!(window as any).BethuneNative;
+    const native = (window as any).BethuneNative;
+    const isNative = !!native;
     addDebug(`Platform: ${isNative ? "Android native app" : "Browser"}`);
     addDebug(`Voice supported: ${voice.isSupported}`);
+
+    if (isNative) {
+      addDebug(`Wake word active: ${native.isWakeWordActive()}`);
+      // Poll native debug log every 2 seconds
+      const interval = setInterval(() => {
+        try {
+          const nativeLog = native.getDebugLog?.();
+          if (nativeLog) {
+            const lines = nativeLog.split("\n").filter(Boolean);
+            setDebugLog((prev) => {
+              // Merge native logs with web logs (native logs prefixed with [N])
+              const nativeEntries = lines.map((l: string) => `[N] ${l}`);
+              const webEntries = prev.filter((l) => !l.startsWith("[N]"));
+              return [...nativeEntries, ...webEntries].slice(0, 80);
+            });
+          }
+        } catch (e) {
+          // ignore
+        }
+      }, 2000);
+      return () => clearInterval(interval);
+    }
   }, [voice.isSupported]);
 
   const handleSubmitText = (text: string) => {
