@@ -52,7 +52,6 @@ dependencies {
 
     // TensorFlow Lite for microWakeWord
     implementation("org.tensorflow:tensorflow-lite:2.16.1")
-    implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
 
     // Foreground service support
     implementation("androidx.work:work-runtime-ktx:2.10.0")

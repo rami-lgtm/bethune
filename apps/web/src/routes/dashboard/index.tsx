@@ -52,41 +52,76 @@ function DashboardPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [voiceOutputEnabled, setVoiceOutputEnabled] = useState(true);
+  const [wakeWordTriggered, setWakeWordTriggered] = useState(false);
+  const [debugLog, setDebugLog] = useState<string[]>([]);
+  const [showDebug, setShowDebug] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const voice = useVoiceInput();
+  const autoSubmitRef = useRef(false);
+
+  const addDebug = (msg: string) => {
+    const ts = new Date().toLocaleTimeString();
+    setDebugLog((prev) => [`[${ts}] ${msg}`, ...prev].slice(0, 50));
+  };
 
   // Sync voice transcript into input field
   useEffect(() => {
     if (voice.transcript) {
       setInput(voice.transcript);
+      addDebug(`Transcript: "${voice.transcript}"`);
     }
   }, [voice.transcript]);
+
+  // Auto-submit when voice recognition produces a final result (wake word flow)
+  useEffect(() => {
+    if (voice.finalTranscript && autoSubmitRef.current) {
+      addDebug(`Auto-submitting: "${voice.finalTranscript}"`);
+      // Small delay to ensure state is synced
+      setTimeout(() => {
+        handleSubmitText(voice.finalTranscript);
+        autoSubmitRef.current = false;
+      }, 200);
+    }
+  }, [voice.finalTranscript]);
 
   // Listen for wake word from native Android app (window.onBethuneWakeWord)
   useEffect(() => {
     (window as any).onBethuneWakeWord = () => {
+      addDebug("Wake word detected! Starting voice input...");
+      setWakeWordTriggered(true);
+      autoSubmitRef.current = true;
       voice.start();
+      setTimeout(() => setWakeWordTriggered(false), 2000);
     };
     return () => {
       delete (window as any).onBethuneWakeWord;
     };
   }, [voice.start]);
 
-  const handleSubmit = () => {
-    const text = input.trim();
-    if (!text) return;
+  // Check if running inside native Android app
+  useEffect(() => {
+    const isNative = !!(window as any).BethuneNative;
+    addDebug(`Platform: ${isNative ? "Android native app" : "Browser"}`);
+    addDebug(`Voice supported: ${voice.isSupported}`);
+  }, [voice.isSupported]);
+
+  const handleSubmitText = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    addDebug(`Sending: "${trimmed}"`);
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
       role: "user",
-      content: text,
+      content: trimmed,
     };
 
     const assistantMsg: Message = {
       id: crypto.randomUUID(),
       role: "assistant",
-      content: getPlaceholderResponse(text),
+      content: getPlaceholderResponse(trimmed),
     };
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
@@ -101,6 +136,10 @@ function DashboardPage() {
     }
 
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+  };
+
+  const handleSubmit = () => {
+    handleSubmitText(input);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -121,6 +160,45 @@ function DashboardPage() {
 
   return (
     <div className="flex h-full flex-col">
+      {/* Wake word flash indicator */}
+      {wakeWordTriggered && (
+        <div className="absolute inset-x-0 top-0 z-50 flex items-center justify-center bg-green-500 px-4 py-2 text-sm font-medium text-white animate-pulse">
+          Wake word detected — listening...
+        </div>
+      )}
+
+      {/* Debug panel toggle */}
+      <button
+        onClick={() => setShowDebug(!showDebug)}
+        className="absolute right-3 top-3 z-50 rounded-lg bg-bethune-black/10 px-2 py-1 text-[10px] font-mono text-bethune-gray hover:bg-bethune-black/20"
+      >
+        {showDebug ? "Hide Debug" : "Debug"}
+      </button>
+
+      {/* Debug log panel */}
+      {showDebug && (
+        <div className="absolute right-3 top-10 z-50 max-h-60 w-80 overflow-y-auto rounded-xl border border-bethune-black/10 bg-white p-3 shadow-lg">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs font-semibold text-bethune-black">Wake Word Debug</span>
+            <div className="flex items-center gap-2">
+              <span className={`inline-block size-2 rounded-full ${voice.isListening ? "bg-red-500 animate-pulse" : "bg-green-500"}`} />
+              <span className="text-[10px] text-bethune-muted">
+                {voice.isListening ? "Listening" : "Idle"}
+              </span>
+            </div>
+          </div>
+          <div className="space-y-0.5">
+            {debugLog.length === 0 ? (
+              <p className="text-[10px] text-bethune-muted">No events yet. Say "Okay Computer" to trigger.</p>
+            ) : (
+              debugLog.map((log, i) => (
+                <p key={i} className="font-mono text-[10px] text-bethune-gray">{log}</p>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Messages / empty state */}
       <div className="flex-1 overflow-y-auto">
         {!hasMessages ? (
