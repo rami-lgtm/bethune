@@ -1,7 +1,10 @@
 package com.bethune.app
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -22,6 +25,16 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private var pendingPermissionRequest: PermissionRequest? = null
+
+    // Receive JS evaluation requests from WakeWordService
+    private val jsReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val js = intent?.getStringExtra("js") ?: return
+            runOnUiThread {
+                webView.evaluateJavascript(js, null)
+            }
+        }
+    }
 
     private val requestPermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -57,7 +70,6 @@ class MainActivity : AppCompatActivity() {
             webViewClient = WebViewClient()
             webChromeClient = object : WebChromeClient() {
                 override fun onPermissionRequest(request: PermissionRequest) {
-                    // Grant microphone access to the web app for voice input
                     if (request.resources.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {
                         if (hasAudioPermission()) {
                             request.grant(request.resources)
@@ -71,16 +83,20 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // JavaScript bridge for wake word activation
             addJavascriptInterface(BethuneJsBridge(this), "BethuneNative")
         }
 
         setContentView(webView)
-
-        // Load the Bethune web app
         webView.loadUrl(BuildConfig.BETHUNE_URL)
 
-        // Request permissions and start wake word service
+        // Register broadcast receiver for JS commands from WakeWordService
+        val filter = IntentFilter("com.bethune.EVALUATE_JS")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(jsReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(jsReceiver, filter)
+        }
+
         checkAndRequestPermissions()
     }
 
@@ -120,19 +136,12 @@ class MainActivity : AppCompatActivity() {
         ContextCompat.startForegroundService(this, intent)
     }
 
-    /**
-     * Called by WakeWordService when "Hey Bethune" is detected.
-     * Activates the web app's voice input via JavaScript.
-     */
-    fun onWakeWordDetected() {
-        runOnUiThread {
-            // Bring app to foreground if needed
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Handle wake word activation when app is brought to foreground
+        if (intent.getBooleanExtra("wake_word", false)) {
             webView.evaluateJavascript(
-                """
-                if (window.onBethuneWakeWord) {
-                    window.onBethuneWakeWord();
-                }
-                """.trimIndent(),
+                "if(window.onBethuneWakeWord)window.onBethuneWakeWord()",
                 null
             )
         }
@@ -147,13 +156,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        unregisterReceiver(jsReceiver)
         webView.destroy()
         super.onDestroy()
     }
 
-    /**
-     * JavaScript interface exposed to the web app as window.BethuneNative
-     */
     inner class BethuneJsBridge(private val webView: WebView) {
 
         @JavascriptInterface

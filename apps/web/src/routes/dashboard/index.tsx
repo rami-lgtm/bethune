@@ -85,19 +85,34 @@ function DashboardPage() {
     }
   }, [voice.finalTranscript]);
 
-  // Listen for wake word from native Android app (window.onBethuneWakeWord)
+  // Listen for wake word + commands from native Android app
   useEffect(() => {
+    // Wake word detected — show "listening" indicator
     (window as any).onBethuneWakeWord = () => {
-      addDebug("Wake word detected! Starting voice input...");
+      addDebug("Wake word detected! Listening for command...");
       setWakeWordTriggered(true);
-      autoSubmitRef.current = true;
-      voice.start();
-      setTimeout(() => setWakeWordTriggered(false), 2000);
+      setTimeout(() => setWakeWordTriggered(false), 3000);
     };
+
+    // Partial command coming in (live transcription)
+    (window as any).onBethunePartial = (text: string) => {
+      setInput(text);
+    };
+
+    // Complete command received — submit to chat
+    (window as any).onBethuneCommand = (command: string) => {
+      addDebug(`Voice command: "${command}"`);
+      setWakeWordTriggered(false);
+      setInput("");
+      handleSubmitText(command);
+    };
+
     return () => {
       delete (window as any).onBethuneWakeWord;
+      delete (window as any).onBethunePartial;
+      delete (window as any).onBethuneCommand;
     };
-  }, [voice.start]);
+  }, []);
 
   // Check if running inside native Android app and poll native debug log
   useEffect(() => {
