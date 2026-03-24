@@ -16,17 +16,17 @@ import org.json.JSONObject
 import java.io.IOException
 
 /**
- * Foreground service that listens for "okay computer" wake word using Vosk
- * offline speech recognition, then captures the command and sends it to the web chat.
+ * Foreground service that listens for "okay computer" wake word using Vosk,
+ * then captures the follow-up command and sends it to the web chat.
  *
  * Flow:
- * 1. WAITING mode: Vosk continuously transcribes, looking for wake phrase
- * 2. Wake phrase found → play chime, extract command from same utterance
- *    e.g. "okay computer vacuum the floor" → command = "vacuum the floor"
- * 3. If no command in same utterance, switch to CAPTURING mode
- * 4. CAPTURING mode: next complete utterance becomes the command
- * 5. Send command to web chat via JavaScript bridge
- * 6. Return to WAITING mode
+ * 1. WAITING: Vosk transcribes continuously, scanning for wake phrase
+ * 2. Wake phrase detected → play chime, switch to CAPTURING
+ * 3. CAPTURING: show partial text in chat input as user speaks
+ * 4. When user finishes speaking (onResult) → send final command to chat
+ * 5. Return to WAITING
+ *
+ * The wake phrase itself is NEVER included in the command text.
  */
 class WakeWordService : Service(), RecognitionListener {
 
@@ -45,8 +45,7 @@ class WakeWordService : Service(), RecognitionListener {
         )
 
         private const val DETECTION_COOLDOWN_MS = 2000L
-        // How long to wait for a command after wake word (ms)
-        private const val COMMAND_TIMEOUT_MS = 8000L
+        private const val COMMAND_TIMEOUT_MS = 10000L
 
         @Volatile
         var isRunning = false
@@ -176,14 +175,20 @@ class WakeWordService : Service(), RecognitionListener {
 
         when (listenMode) {
             ListenMode.WAITING -> {
-                // Check for wake word in partial results for faster response
                 checkForWakeWord(text)
             }
             ListenMode.CAPTURING -> {
-                // Show partial command in debug
-                NativeDebugLog.log("Hearing: \"$text\"")
-                // Send partial to web view so user sees it typing
-                sendPartialToWebView(text)
+                // Strip any leftover wake phrase from the partial
+                val clean = stripWakePhrases(text)
+                if (clean.isNotEmpty()) {
+                    sendPartialToWebView(clean)
+                }
+                // Check timeout
+                if (System.currentTimeMillis() - captureStartTime > COMMAND_TIMEOUT_MS) {
+                    NativeDebugLog.log("Command timeout — back to waiting")
+                    listenMode = ListenMode.WAITING
+                    sendJsToWebView("if(window.onBethuneCancelCapture)window.onBethuneCancelCapture()")
+                }
             }
         }
     }
@@ -191,17 +196,21 @@ class WakeWordService : Service(), RecognitionListener {
     override fun onResult(hypothesis: String?) {
         hypothesis ?: return
         val text = parseText(hypothesis)
-        if (text.isEmpty()) return
 
         when (listenMode) {
             ListenMode.WAITING -> {
-                NativeDebugLog.log("Heard: \"$text\"")
-                checkForWakeWord(text)
+                if (text.isNotEmpty()) {
+                    checkForWakeWord(text)
+                }
             }
             ListenMode.CAPTURING -> {
-                // This is the complete command
-                NativeDebugLog.log("Command: \"$text\"")
-                sendCommandToWebView(text)
+                // This is the finished utterance — the user stopped talking
+                val clean = stripWakePhrases(text)
+                if (clean.isNotEmpty()) {
+                    NativeDebugLog.log("Command: \"$clean\"")
+                    sendCommandToWebView(clean)
+                }
+                // Even if empty (they just said the wake word again), go back to waiting
                 listenMode = ListenMode.WAITING
                 NativeDebugLog.log("Back to listening for wake word")
             }
@@ -212,8 +221,11 @@ class WakeWordService : Service(), RecognitionListener {
         hypothesis ?: return
         val text = parseText(hypothesis)
         if (text.isNotEmpty() && listenMode == ListenMode.CAPTURING) {
-            NativeDebugLog.log("Final command: \"$text\"")
-            sendCommandToWebView(text)
+            val clean = stripWakePhrases(text)
+            if (clean.isNotEmpty()) {
+                NativeDebugLog.log("Final command: \"$clean\"")
+                sendCommandToWebView(clean)
+            }
             listenMode = ListenMode.WAITING
         }
     }
@@ -244,6 +256,17 @@ class WakeWordService : Service(), RecognitionListener {
         }
     }
 
+    /**
+     * Remove any wake phrase from the text so it doesn't appear in the command.
+     */
+    private fun stripWakePhrases(text: String): String {
+        var result = text
+        for (phrase in WAKE_PHRASES) {
+            result = result.replace(phrase, "")
+        }
+        return result.trim()
+    }
+
     private fun checkForWakeWord(text: String) {
         val now = System.currentTimeMillis()
         if (now - lastDetectionTime < DETECTION_COOLDOWN_MS) return
@@ -251,38 +274,18 @@ class WakeWordService : Service(), RecognitionListener {
         for (phrase in WAKE_PHRASES) {
             if (text.contains(phrase)) {
                 lastDetectionTime = now
-                NativeDebugLog.log("*** WAKE WORD: \"$phrase\" ***")
+                NativeDebugLog.log("*** WAKE WORD DETECTED ***")
 
                 // Play chime
                 playChime()
 
-                // Check if there's a command after the wake phrase
-                // e.g. "okay computer vacuum the floor"
-                val idx = text.indexOf(phrase) + phrase.length
-                val afterWake = text.substring(idx).trim()
-
-                if (afterWake.isNotEmpty()) {
-                    // Command was in the same utterance
-                    NativeDebugLog.log("Inline command: \"$afterWake\"")
-                    sendCommandToWebView(afterWake)
-                } else {
-                    // No command yet — switch to capture mode for next utterance
-                    NativeDebugLog.log("Waiting for command...")
-                    listenMode = ListenMode.CAPTURING
-                    captureStartTime = now
-                    // Notify web view that wake word was detected (show indicator)
-                    notifyWakeWordDetected()
-                }
+                // Always go to CAPTURING mode — wait for user to speak their command
+                // after the chime (never send inline commands)
+                listenMode = ListenMode.CAPTURING
+                captureStartTime = now
+                notifyWakeWordDetected()
                 return
             }
-        }
-
-        // Check capture timeout
-        if (listenMode == ListenMode.CAPTURING &&
-            System.currentTimeMillis() - captureStartTime > COMMAND_TIMEOUT_MS
-        ) {
-            NativeDebugLog.log("Command timeout — back to waiting")
-            listenMode = ListenMode.WAITING
         }
     }
 
@@ -298,31 +301,30 @@ class WakeWordService : Service(), RecognitionListener {
     }
 
     private fun notifyWakeWordDetected() {
-        // Bring activity to foreground and tell web view we're listening for command
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("wake_word", true)
         }
         startActivity(intent)
-
-        // Tell web view to show "listening" indicator
         sendJsToWebView("if(window.onBethuneWakeWord)window.onBethuneWakeWord()")
     }
 
     private fun sendPartialToWebView(text: String) {
-        val escaped = text.replace("\\", "\\\\").replace("'", "\\'").replace("\"", "\\\"")
+        val escaped = escapeJs(text)
         sendJsToWebView("if(window.onBethunePartial)window.onBethunePartial('$escaped')")
     }
 
     private fun sendCommandToWebView(command: String) {
-        val escaped = command.replace("\\", "\\\\").replace("'", "\\'").replace("\"", "\\\"")
+        val escaped = escapeJs(command)
         sendJsToWebView("if(window.onBethuneCommand)window.onBethuneCommand('$escaped')")
         NativeDebugLog.log("Sent to chat: \"$command\"")
     }
 
+    private fun escapeJs(text: String): String {
+        return text.replace("\\", "\\\\").replace("'", "\\'").replace("\"", "\\\"")
+    }
+
     private fun sendJsToWebView(js: String) {
-        val intent = Intent("com.bethune.EVALUATE_JS")
-        intent.putExtra("js", js)
-        sendBroadcast(intent)
+        MainActivity.evaluateJs(js)
     }
 }

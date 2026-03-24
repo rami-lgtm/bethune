@@ -59,6 +59,7 @@ function DashboardPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const voice = useVoiceInput();
   const autoSubmitRef = useRef(false);
+  const handleSubmitTextRef = useRef<(text: string) => void>(() => {});
 
   const addDebug = (msg: string) => {
     const ts = new Date().toLocaleTimeString();
@@ -87,30 +88,43 @@ function DashboardPage() {
 
   // Listen for wake word + commands from native Android app
   useEffect(() => {
-    // Wake word detected — show "listening" indicator
+    // Wake word detected — show "listening" indicator, keep it visible while capturing
     (window as any).onBethuneWakeWord = () => {
       addDebug("Wake word detected! Listening for command...");
       setWakeWordTriggered(true);
-      setTimeout(() => setWakeWordTriggered(false), 3000);
     };
 
-    // Partial command coming in (live transcription)
+    // Partial command coming in (live transcription as user speaks)
     (window as any).onBethunePartial = (text: string) => {
       setInput(text);
+      // Keep the indicator alive while partials come in
+      setWakeWordTriggered(true);
     };
 
-    // Complete command received — submit to chat
+    // Complete command received — submit to chat (uses ref for latest function)
     (window as any).onBethuneCommand = (command: string) => {
       addDebug(`Voice command: "${command}"`);
       setWakeWordTriggered(false);
+      setInput(command);
+      // Small delay so user sees the final text before it submits
+      setTimeout(() => {
+        handleSubmitTextRef.current(command);
+        setInput("");
+      }, 400);
+    };
+
+    // Capture cancelled (timeout, no command spoken)
+    (window as any).onBethuneCancelCapture = () => {
+      addDebug("Command capture timed out");
+      setWakeWordTriggered(false);
       setInput("");
-      handleSubmitText(command);
     };
 
     return () => {
       delete (window as any).onBethuneWakeWord;
       delete (window as any).onBethunePartial;
       delete (window as any).onBethuneCommand;
+      delete (window as any).onBethuneCancelCapture;
     };
   }, []);
 
@@ -176,6 +190,9 @@ function DashboardPage() {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
   };
 
+  // Keep ref always pointing to latest handleSubmitText
+  handleSubmitTextRef.current = handleSubmitText;
+
   const handleSubmit = () => {
     handleSubmitText(input);
   };
@@ -198,10 +215,11 @@ function DashboardPage() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Wake word flash indicator */}
+      {/* Wake word listening indicator */}
       {wakeWordTriggered && (
-        <div className="absolute inset-x-0 top-0 z-50 flex items-center justify-center bg-green-500 px-4 py-2 text-sm font-medium text-white animate-pulse">
-          Wake word detected — listening...
+        <div className="absolute inset-x-0 top-0 z-50 flex items-center justify-center gap-2 bg-bethune-warm px-4 py-2.5 text-sm font-medium text-white">
+          <span className="inline-block size-2 animate-pulse rounded-full bg-white" />
+          Listening — speak your command...
         </div>
       )}
 

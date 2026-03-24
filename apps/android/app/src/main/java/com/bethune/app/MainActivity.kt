@@ -1,13 +1,12 @@
 package com.bethune.app
 
 import android.Manifest
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -23,18 +22,26 @@ import androidx.core.view.WindowInsetsControllerCompat
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var webView: WebView
-    private var pendingPermissionRequest: PermissionRequest? = null
+    companion object {
+        // Static reference so WakeWordService can call evaluateJs directly
+        // (same process, no broadcast needed)
+        @Volatile
+        private var instance: MainActivity? = null
 
-    // Receive JS evaluation requests from WakeWordService
-    private val jsReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            val js = intent?.getStringExtra("js") ?: return
-            runOnUiThread {
-                webView.evaluateJavascript(js, null)
+        fun evaluateJs(js: String) {
+            val activity = instance ?: return
+            Handler(Looper.getMainLooper()).post {
+                try {
+                    activity.webView.evaluateJavascript(js, null)
+                } catch (e: Exception) {
+                    // Activity might be destroyed
+                }
             }
         }
     }
+
+    private lateinit var webView: WebView
+    private var pendingPermissionRequest: PermissionRequest? = null
 
     private val requestPermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -52,6 +59,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        instance = this
 
         // Fullscreen immersive mode (kiosk-like)
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -88,15 +96,6 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(webView)
         webView.loadUrl(BuildConfig.BETHUNE_URL)
-
-        // Register broadcast receiver for JS commands from WakeWordService
-        val filter = IntentFilter("com.bethune.EVALUATE_JS")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(jsReceiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(jsReceiver, filter)
-        }
-
         checkAndRequestPermissions()
     }
 
@@ -138,7 +137,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        // Handle wake word activation when app is brought to foreground
         if (intent.getBooleanExtra("wake_word", false)) {
             webView.evaluateJavascript(
                 "if(window.onBethuneWakeWord)window.onBethuneWakeWord()",
@@ -156,7 +154,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        unregisterReceiver(jsReceiver)
+        instance = null
         webView.destroy()
         super.onDestroy()
     }
